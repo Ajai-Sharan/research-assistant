@@ -72,3 +72,78 @@ def query_planner_node(state: ResearchState) -> dict[str, Any]:
         return {"stage": "error", "error": "Planner returned no sub-queries."}
 
     return {"stage": "planning", "sub_queries": sub_queries[:SUB_QUERY_COUNT]}
+
+
+# ---------------------------------------------------------------------------
+# 2. Search Agent
+# ---------------------------------------------------------------------------
+def search_node(state: ResearchState) -> dict[str, Any]:
+    sub_queries = state.get("sub_queries", [])
+    bag: list[PaperRecord] = []
+    for q in sub_queries:
+        bag.extend(search_papers(q, max_results=PAPERS_PER_QUERY))
+    deduped = dedupe_papers(bag)
+    if not deduped:
+        return {
+            "stage": "error",
+            "error": "Search returned 0 papers across all sub-queries. "
+                     "Check network access to export.arxiv.org.",
+        }
+    return {"stage": "searching", "downloaded_papers": deduped}
+
+
+# ---------------------------------------------------------------------------
+# 3. Reading Agent
+# ---------------------------------------------------------------------------
+_READING_SYSTEM = (
+    "You are a meticulous research analyst. Given a paper's title and abstract, "
+    "extract its structured essentials. Return strict JSON with this schema:\n"
+    "{\n"
+    '  "core_claims": ["..."],   // 2-4 bullet claims\n'
+    '  "methodology": "...",      // 1-3 sentence description\n'
+    '  "limitations": ["..."],   // 1-3 explicit or inferred limitations\n'
+    '  "relevance": "..."         // 1-sentence relevance to the parent topic\n'
+    "}\n"
+    "Do not invent details that are not implied by the abstract."
+)
+
+
+def reading_node(state: ResearchState) -> dict[str, Any]:
+    topic = state["original_query"]
+    papers = state.get("downloaded_papers", [])
+    summaries: list[PaperSummary] = []
+    for paper in papers:
+        user_msg = (
+            f"Parent research topic: {topic}\n\n"
+            f"Title: {paper.get('title')}\n"
+            f"Authors: {', '.join(paper.get('authors', []))}\n"
+            f"Abstract: {paper.get('abstract')}\n"
+        )
+        try:
+            data = chat_json(
+                [
+                    {"role": "system", "content": _READING_SYSTEM},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.1,
+            )
+        except Exception as exc:
+            log.warning("Reading failed for %s: %s", paper.get("paper_id"), exc)
+            data = {
+                "core_claims": [],
+                "methodology": "",
+                "limitations": [],
+                "relevance": "(summary unavailable)",
+            }
+        summaries.append(
+            PaperSummary(
+                paper_id=paper.get("paper_id", ""),
+                title=paper.get("title", ""),
+                url=paper.get("url", ""),
+                core_claims=list(data.get("core_claims") or []),
+                methodology=str(data.get("methodology") or ""),
+                limitations=list(data.get("limitations") or []),
+                relevance=str(data.get("relevance") or ""),
+            )
+        )
+    return {"stage": "reading", "paper_summaries": summaries}
