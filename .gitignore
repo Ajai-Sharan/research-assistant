@@ -1,0 +1,30 @@
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# Python cache / compile files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Frontend node modules and build output
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# IDEs and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Contributions doc (local only)
+CONTRIBUTIONS.md

@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+openai>=1.30
+langgraph>=0.2.30
+langchain-core>=0.2.30
+requests>=2.31
+streamlit>=1.32
