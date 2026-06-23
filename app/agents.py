@@ -12,9 +12,12 @@ from typing import Any
 from .llm import chat, chat_json
 from .search import dedupe_papers, search_papers
 from .state import PaperRecord, PaperSummary, ResearchState
+from .tools.exporter import save_draft_to_file
 
 log = logging.getLogger(__name__)
 
+# Tunable knobs -- exposed as constants rather than args because LangGraph
+# nodes are bound at graph-construction time.
 SUB_QUERY_COUNT = 4
 PAPERS_PER_QUERY = 4
 
@@ -267,4 +270,77 @@ def drafting_node(state: ResearchState) -> dict[str, Any]:
     if "References" not in draft:
         draft = f"{draft.strip()}\n\n## References\n\n{refs}\n"
 
-    return {"stage": "complete", "final_draft": draft.strip()}
+    return {"stage": "citation_check", "final_draft": draft.strip()}
+
+
+# ---------------------------------------------------------------------------
+# 7. Citation Agent
+# ---------------------------------------------------------------------------
+_CITATION_SYSTEM = (
+    "You are a meticulous academic copyeditor and citation auditor.\n"
+    "Your job is to read a draft research paper, verify that all inline citation "
+    "markers like [P#] correspond to actual indices in the provided reference list, "
+    "and identify any citation gaps (e.g. bold claims, specific statistics, or theories "
+    "that are missing references).\n\n"
+    "You must return a JSON response with the following format:\n"
+    "{\n"
+    '  "audited_draft": "...",   // the revised paper draft with any corrected citations or formatting\n'
+    '  "gaps_found": ["..."],    // 1-3 sentences describing any claims that should have citations but lack them, or \"None\"\n'
+    '  "formatting_status": "..." // summary of references formatting e.g. \"APA reference block verified.\"\n'
+    "}\n"
+    "Ensure the JSON is strictly structured. Do not add conversational text outside the JSON."
+)
+
+
+def citation_agent_node(state: ResearchState) -> dict[str, Any]:
+    topic = state["original_query"]
+    draft = state.get("final_draft", "")
+    summaries = state.get("paper_summaries", [])
+    papers = state.get("downloaded_papers", [])
+
+    refs = _format_references_block(summaries, papers)
+    user_prompt = (
+        f"Parent research topic: {topic}\n\n"
+        f"Draft Paper:\n{draft}\n\n"
+        f"Reference List:\n{refs}\n"
+    )
+
+    try:
+        data = chat_json(
+            [
+                {"role": "system", "content": _CITATION_SYSTEM},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+        )
+        
+        audited_draft = data.get("audited_draft") or draft
+        gaps = data.get("gaps_found") or ["None"]
+        formatting = data.get("formatting_status") or "Citations verified."
+        
+        report = (
+            f"### Citation Verification Audit\n"
+            f"- **Formatting Status**: {formatting}\n"
+            f"- **Gaps / Recommendations Identified**:\n"
+            + "\n".join(f"  - {g}" for g in gaps)
+        )
+        
+        saved_path = save_draft_to_file(topic, audited_draft)
+        log.info("Saved audited draft to: %s", saved_path)
+        
+        return {
+            "stage": "complete",
+            "final_draft": audited_draft.strip(),
+            "citation_report": report,
+            "saved_draft_path": saved_path
+        }
+    except Exception as exc:
+        log.warning("Citation agent failed: %s", exc)
+        # Fall back gracefully so the paper is still complete even if citation auditing fails
+        fallback_report = "### Citation Verification Audit\n- *Automated audit unavailable due to LLM error. References appended.*"
+        saved_path = save_draft_to_file(topic, draft)
+        return {
+            "stage": "complete",
+            "citation_report": fallback_report,
+            "saved_draft_path": saved_path
+        }
