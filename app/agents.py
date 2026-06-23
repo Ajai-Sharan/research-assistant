@@ -147,3 +147,124 @@ def reading_node(state: ResearchState) -> dict[str, Any]:
             )
         )
     return {"stage": "reading", "paper_summaries": summaries}
+
+
+# ---------------------------------------------------------------------------
+# 4. Synthesis Agent
+# ---------------------------------------------------------------------------
+_SYNTHESIS_SYSTEM = (
+    "You are a senior literature-review editor. Using the structured summaries "
+    "below, produce a 'Literature Outline' in Markdown that:\n"
+    "1. Groups related findings into thematic sections.\n"
+    "2. Explicitly flags contradictions between papers (use '> Contradiction:' callouts).\n"
+    "3. Uses inline citations of the form [P#] where # is the 1-based index of "
+    "   the paper as supplied.\n"
+    "4. Ends with a 'Suggested Draft Structure' section listing the chapters/"
+    "   sections the final paper should contain.\n"
+    "Do not output the final paper itself -- only the outline."
+)
+
+
+def _format_summaries_for_prompt(summaries: list[PaperSummary]) -> str:
+    lines: list[str] = []
+    for idx, s in enumerate(summaries, start=1):
+        lines.append(f"[P{idx}] {s.get('title')}  ({s.get('url')})")
+        if s.get("core_claims"):
+            lines.append("  Claims: " + "; ".join(s["core_claims"]))
+        if s.get("methodology"):
+            lines.append(f"  Methodology: {s['methodology']}")
+        if s.get("limitations"):
+            lines.append("  Limitations: " + "; ".join(s["limitations"]))
+        if s.get("relevance"):
+            lines.append(f"  Relevance: {s['relevance']}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def synthesis_node(state: ResearchState) -> dict[str, Any]:
+    summaries = state.get("paper_summaries", [])
+    topic = state["original_query"]
+    feedback = state.get("feedback")
+
+    user_parts = [f"Research topic: {topic}", "", "Paper summaries:", _format_summaries_for_prompt(summaries)]
+    if feedback:
+        user_parts.extend(["", "Human reviewer feedback to incorporate:", feedback])
+
+    try:
+        outline = chat(
+            [
+                {"role": "system", "content": _SYNTHESIS_SYSTEM},
+                {"role": "user", "content": "\n".join(user_parts)},
+            ],
+            temperature=0.4,
+        )
+    except Exception as exc:
+        log.exception("Synthesis failed")
+        return {"stage": "error", "error": f"Synthesis failed: {exc}"}
+
+    return {"stage": "awaiting_review", "draft_outline": outline.strip()}
+
+
+# ---------------------------------------------------------------------------
+# 5. Human Review Node -- a pass-through; the *interrupt* is what pauses us.
+# ---------------------------------------------------------------------------
+def human_review_node(state: ResearchState) -> dict[str, Any]:
+    # When the graph is resumed (post-approval) this runs and clears feedback
+    # so the drafting agent sees a clean slate.
+    return {"stage": "drafting", "feedback": None}
+
+
+# ---------------------------------------------------------------------------
+# 6. Citation & Drafting Agent
+# ---------------------------------------------------------------------------
+_DRAFTING_SYSTEM = (
+    "You are a scholarly writer. Produce a complete research document in "
+    "Markdown that follows the approved outline. Every non-trivial claim MUST "
+    "be supported by an inline citation in the form [P#]. Conclude with a "
+    "'References' section listing each cited paper as:\n"
+    "[P#] Authors. *Title*. URL\n"
+    "Do not invent papers; only cite from the provided list."
+)
+
+
+def _format_references_block(summaries: list[PaperSummary], papers: list[PaperRecord]) -> str:
+    by_id = {p.get("paper_id"): p for p in papers}
+    lines = []
+    for idx, s in enumerate(summaries, start=1):
+        paper = by_id.get(s.get("paper_id"), {})
+        authors = ", ".join(paper.get("authors", [])) or "Unknown authors"
+        lines.append(f"[P{idx}] {authors}. *{s.get('title')}*. {s.get('url')}")
+    return "\n".join(lines)
+
+
+def drafting_node(state: ResearchState) -> dict[str, Any]:
+    topic = state["original_query"]
+    summaries = state.get("paper_summaries", [])
+    outline = state.get("draft_outline", "")
+
+    user = (
+        f"Research topic: {topic}\n\n"
+        f"Approved outline:\n{outline}\n\n"
+        f"Paper summaries (cite as [P#] using these indices):\n"
+        f"{_format_summaries_for_prompt(summaries)}"
+    )
+
+    try:
+        draft = chat(
+            [
+                {"role": "system", "content": _DRAFTING_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.5,
+            max_tokens=3000,
+        )
+    except Exception as exc:
+        log.exception("Drafting failed")
+        return {"stage": "error", "error": f"Drafting failed: {exc}"}
+
+    # Guarantee the references block exists even if the model omitted it.
+    refs = _format_references_block(summaries, state.get("downloaded_papers", []))
+    if "References" not in draft:
+        draft = f"{draft.strip()}\n\n## References\n\n{refs}\n"
+
+    return {"stage": "complete", "final_draft": draft.strip()}
