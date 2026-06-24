@@ -94,7 +94,7 @@ pip install -r requirements.txt
 export GROQ_API_KEY_1=gsk_xxx
 export GROQ_API_KEY_2=gsk_yyy
 export GROQ_API_KEY_3=gsk_zzz
-# Optional: export GROQ_MODEL=llama-3.3-70b-specdec
+# Optional: export GROQ_MODEL=llama-3.3-70b-versatile
 
 # Option B: GitHub Models fallback
 export GITHUB_TOKEN=ghp_xxx_your_github_models_token

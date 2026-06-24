@@ -83,7 +83,7 @@ def get_client(api_key: str, base_url: str) -> OpenAI:
 
 def resolve_model(requested_model: str | None, is_groq: bool) -> str:
     if is_groq:
-        groq_default = os.environ.get("GROQ_MODEL", "llama-3.3-70b-specdec")
+        groq_default = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
         if not requested_model or "gpt-" in requested_model or "openai/" in requested_model:
             return groq_default
         return requested_model

@@ -142,6 +142,7 @@ def health() -> dict[str, Any]:
 def start_research(req: StartRequest, background: BackgroundTasks) -> StartResponse:
     job_id = uuid.uuid4().hex
     log.info("Starting job %s for topic=%r", job_id, req.topic)
+    _lock_for(job_id)  # Register the job so the status endpoint knows it's active
     background.add_task(_run_initial, job_id, req.topic)
     return StartResponse(job_id=job_id, status="queued")
 
@@ -150,6 +151,15 @@ def start_research(req: StartRequest, background: BackgroundTasks) -> StartRespo
 def status(job_id: str) -> StatusResponse:
     state = snapshot(job_id)
     if not state:
+        if job_id in _job_locks:
+            return StatusResponse(
+                job_id=job_id,
+                stage="queued",
+                awaiting_review=False,
+                sub_queries=[],
+                downloaded_papers=[],
+                paper_summaries=[],
+            )
         raise HTTPException(status_code=404, detail="Unknown job_id")
     return _state_to_response(job_id, state)
 
