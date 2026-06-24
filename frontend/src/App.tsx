@@ -52,7 +52,25 @@ function App() {
     };
   }, []);
 
+  const checkHealth = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/health`);
+      if (res.ok) {
+        setBackendStatus('online');
+      } else {
+        setBackendStatus('offline');
+      }
+    } catch (err) {
+      setBackendStatus('offline');
+    }
+  };
 
+  // Health check on startup and every 5 seconds
+  useEffect(() => {
+    checkHealth();
+    const healthInterval = setInterval(checkHealth, 5000);
+    return () => clearInterval(healthInterval);
+  }, []);
 
   // Poll status helper
   const fetchStatus = async (id: string) => {
@@ -181,7 +199,7 @@ function App() {
 
   return (
     <div className="app-container">
-      <Header backendUrl={BACKEND_URL} />
+      <Header backendUrl={BACKEND_URL} backendStatus={backendStatus} />
       
       <main className="main-content">
         {view === 'input' && (

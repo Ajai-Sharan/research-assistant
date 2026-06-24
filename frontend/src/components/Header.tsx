@@ -3,9 +3,10 @@ import { Cpu } from 'lucide-react';
 
 interface HeaderProps {
   backendUrl: string;
+  backendStatus: 'online' | 'offline' | 'checking';
 }
 
-export const Header: React.FC<HeaderProps> = ({ backendUrl }) => {
+export const Header: React.FC<HeaderProps> = ({ backendUrl, backendStatus }) => {
   return (
     <header className="fade-in" style={{
       display: 'flex',
@@ -61,6 +62,31 @@ export const Header: React.FC<HeaderProps> = ({ backendUrl }) => {
         }}>
           <span style={{ color: 'var(--text-muted)' }}>API:</span>
           <code style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{backendUrl}</code>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            marginLeft: '8px',
+            borderLeft: '1px solid var(--border-color)',
+            paddingLeft: '8px'
+          }}>
+            <span 
+              className={`status-dot ${backendStatus}`} 
+              title={`Backend: ${backendStatus}`}
+            />
+            <span style={{
+              fontSize: '0.75rem',
+              fontWeight: 500,
+              textTransform: 'capitalize',
+              color: backendStatus === 'online' 
+                ? 'var(--accent-green)' 
+                : backendStatus === 'offline' 
+                  ? 'var(--accent-red)' 
+                  : '#eab308'
+            }}>
+              {backendStatus}
+            </span>
+          </div>
         </div>
       </div>
     </header>
